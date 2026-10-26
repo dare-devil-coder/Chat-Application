@@ -18,6 +18,12 @@ interface ServerMessage {
   receiver_id: number;
   text: string;
   timestamp: string;
+  attachment?: {
+    url: string; // relative, e.g. /uploads/abc_photo.png
+    name: string;
+    kind: 'image' | 'video' | 'file';
+    size: number;
+  } | null;
 }
 
 // The AI assistant stays a local-only contact from the mock data
@@ -36,11 +42,33 @@ const toMessage = (m: ServerMessage, myId: number): Message => ({
   text: m.text,
   timestamp: formatTime(m.timestamp),
   isOutgoing: m.sender_id === myId,
+  attachment: m.attachment
+    ? { ...m.attachment, url: `${API_URL}${m.attachment.url}` }
+    : undefined,
 });
+
+// Text shown in the sidebar under the contact name
+const previewOf = (m: ServerMessage): string => {
+  if (m.text) return m.text;
+  if (m.attachment?.kind === 'image') return 'Photo';
+  if (m.attachment?.kind === 'video') return 'Video';
+  if (m.attachment) return 'Document';
+  return '';
+};
 
 const aiOnlyConversations = (): Record<string, Message[]> => ({
   [AI_USER.id]: INITIAL_CONVERSATIONS[AI_USER.id] ?? [],
 });
+
+// Uploads one file to the Python server and returns its stored id
+const uploadFile = async (file: File): Promise<string> => {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(`${API_URL}/api/upload`, { method: 'POST', body: form });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Upload failed');
+  return data.file_id as string;
+};
 
 export default function ChatApp() {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
@@ -50,12 +78,18 @@ export default function ChatApp() {
     aiOnlyConversations()
   );
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [onlineIds, setOnlineIds] = useState<number[]>([]);
+  const [uploading, setUploading] = useState(false);
 
   const socketRef = useRef<Socket | null>(null);
   const selectedUserIdRef = useRef<string | null>(null);
   selectedUserIdRef.current = selectedUserId;
 
-  const selectedUser = users.find((u) => u.id === selectedUserId) || null;
+  // Merge live presence into the user list (the AI is always shown as online)
+  const usersWithPresence = users.map((u) =>
+    u.isAI ? u : { ...u, isOnline: onlineIds.includes(Number(u.id)) }
+  );
+  const selectedUser = usersWithPresence.find((u) => u.id === selectedUserId) || null;
   const currentMessages = selectedUserId ? conversations[selectedUserId] || [] : [];
 
   // 1) Restore login for this browser tab (sessionStorage is per-tab,
@@ -82,7 +116,7 @@ export default function ChatApp() {
             id: String(u.id),
             name: u.username,
             initials: u.username.slice(0, 2).toUpperCase(),
-            isOnline: false, // placeholder until we track online users
+            isOnline: false, // replaced by live presence below
             lastMessage: '',
             time: '',
             hasUnread: false,
@@ -116,7 +150,7 @@ export default function ChatApp() {
           u.id === otherId
             ? {
                 ...u,
-                lastMessage: m.text,
+                lastMessage: previewOf(m),
                 time: msg.timestamp,
                 hasUnread: !msg.isOutgoing && selectedUserIdRef.current !== otherId,
               }
@@ -126,6 +160,8 @@ export default function ChatApp() {
     });
 
     socket.on('error message', (e: { error: string }) => alert(e.error));
+
+    socket.on('presence', (p: { online: number[] }) => setOnlineIds(p.online));
 
     return () => {
       socket.disconnect();
@@ -144,22 +180,42 @@ export default function ChatApp() {
     setUsers([AI_USER]);
     setConversations(aiOnlyConversations());
     setSelectedUserId(null);
+    setOnlineIds([]);
   };
 
-  const handleSendMessage = (text: string) => {
+  const handleSendMessage = async (text: string, file?: File) => {
     if (!selectedUserId || !currentUser) return;
 
-    // Real users: send over the socket; the server saves it and echoes it back
+    // Real users: upload the file first (if any), then send over the socket.
+    // The server saves the message and echoes it back to both people.
     if (!selectedUser?.isAI) {
+      let fileId: string | undefined;
+      if (file) {
+        setUploading(true);
+        try {
+          fileId = await uploadFile(file);
+        } catch (err) {
+          alert(err instanceof Error ? err.message : 'Upload failed');
+          return;
+        } finally {
+          setUploading(false);
+        }
+      }
       socketRef.current?.emit('private message', {
         sender_id: currentUser.id,
         receiver_id: Number(selectedUserId),
         text,
+        file_id: fileId,
       });
       return;
     }
 
-    // Chat AI: unchanged local demo behaviour
+    // Chat AI: local demo behaviour, text only
+    if (file) {
+      alert('Chat AI cannot receive files');
+      return;
+    }
+
     const timeString = new Date().toLocaleTimeString([], {
       hour: 'numeric',
       minute: '2-digit',
@@ -230,7 +286,7 @@ export default function ChatApp() {
           setUsers((prev) =>
             prev.map((u) =>
               u.id === user.id
-                ? { ...u, lastMessage: last.text, time: formatTime(last.timestamp) }
+                ? { ...u, lastMessage: previewOf(last), time: formatTime(last.timestamp) }
                 : u
             )
           );
@@ -249,7 +305,7 @@ export default function ChatApp() {
   return (
     <main className="h-screen w-full flex overflow-hidden bg-[#F8FAFC]">
       <ChatSidebar
-        users={users}
+        users={usersWithPresence}
         selectedUserId={selectedUserId}
         onSelectUser={handleSelectUser}
         currentUsername={currentUser.username}
@@ -266,7 +322,7 @@ export default function ChatApp() {
           <>
             <ChatHeader user={selectedUser} onBack={() => setSelectedUserId(null)} />
             <MessageList messages={currentMessages} />
-            <MessageInput onSendMessage={handleSendMessage} />
+            <MessageInput onSendMessage={handleSendMessage} disabled={uploading} />
           </>
         ) : (
           <EmptyState />

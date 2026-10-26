@@ -1,18 +1,20 @@
 'use client';
 
 import React from 'react';
-import { Check } from 'lucide-react';
+import { Check, FileText } from 'lucide-react';
 import { Message } from '../data/mockData';
+import { formatSize } from '../lib/formatSize';
 
 interface MessageBubbleProps {
   message: Message;
 }
 
-// Single message bubble component adhering to strict padding, radius, and color tokens
-// Includes subtle entrance animation (180ms ease-out for outgoing, 220ms ease-out for incoming)
-// and a minimal checkmark read indicator for outgoing items.
+// Single message bubble. Shows the attachment (photo, video or document card)
+// above the text/caption when the message has one.
 export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
   const isOutgoing = message.isOutgoing;
+  const attachment = message.attachment;
+  const isMedia = attachment?.kind === 'image' || attachment?.kind === 'video';
 
   return (
     <div
@@ -22,12 +24,56 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
     >
       <div
         className={`max-w-[70%] px-[14px] py-[10px] rounded-[14px] text-[14px] leading-[1.5] break-words ${
+          isMedia ? 'w-[320px]' : ''
+        } ${
           isOutgoing
             ? 'bg-[#2563EB] text-[#FFFFFF] animate-send'
             : 'bg-[#F1F5F9] text-[#111827] animate-receive'
         }`}
       >
-        <p className="whitespace-pre-wrap font-normal">{message.text}</p>
+        {attachment?.kind === 'image' && (
+          <a href={attachment.url} target="_blank" rel="noreferrer" title="Open full size">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={attachment.url}
+              alt={attachment.name}
+              className="rounded-[10px] w-full max-h-[320px] object-cover"
+            />
+          </a>
+        )}
+
+        {attachment?.kind === 'video' && (
+          <video
+            src={attachment.url}
+            controls
+            preload="metadata"
+            className="rounded-[10px] w-full max-h-[320px] bg-black"
+          />
+        )}
+
+        {attachment?.kind === 'file' && (
+          <a
+            href={`${attachment.url}?download=1`}
+            title="Download"
+            className={`flex items-center gap-3 rounded-[10px] px-3 py-2 min-w-[220px] ${
+              isOutgoing ? 'bg-white/15' : 'bg-white'
+            }`}
+          >
+            <FileText size={22} color={isOutgoing ? '#FFFFFF' : '#2563EB'} />
+            <span className="min-w-0">
+              <span className="block text-[13px] font-medium truncate">{attachment.name}</span>
+              <span className={`block text-[12px] ${isOutgoing ? 'text-white/80' : 'text-[#6B7280]'}`}>
+                {formatSize(attachment.size)}
+              </span>
+            </span>
+          </a>
+        )}
+
+        {message.text && (
+          <p className={`whitespace-pre-wrap font-normal ${attachment ? 'mt-2' : ''}`}>
+            {message.text}
+          </p>
+        )}
       </div>
 
       {/* Metadata row with timestamp and subtle read indicator */}

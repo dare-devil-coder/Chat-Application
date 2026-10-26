@@ -35,12 +35,13 @@ class AdminUser(User):
 
 
 class Message:
-    def __init__(self, id, sender_id, receiver_id, text, timestamp):
+    def __init__(self, id, sender_id, receiver_id, text, timestamp, attachment=None):
         self.id = id
         self.sender_id = sender_id
         self.receiver_id = receiver_id
         self.text = text
         self.timestamp = timestamp
+        self.attachment = attachment      # None, or {url, name, kind, size}
 
     def to_dict(self):
         return {
@@ -49,12 +50,22 @@ class Message:
             "receiver_id": self.receiver_id,
             "text": self.text,
             "timestamp": self.timestamp,
+            "attachment": self.attachment,
         }
 
     def __str__(self):
-        return f"[{self.timestamp}] {self.sender_id} -> {self.receiver_id}: {self.text}"
+        extra = f" [{self.attachment['kind']}: {self.attachment['name']}]" if self.attachment else ""
+        return f"[{self.timestamp}] {self.sender_id} -> {self.receiver_id}: {self.text}{extra}"
 
     @staticmethod
     def from_row(row):
+        attachment = None
+        if row["attachment_url"]:
+            attachment = {
+                "url": row["attachment_url"],
+                "name": row["attachment_name"],
+                "kind": row["attachment_kind"],
+                "size": row["attachment_size"],
+            }
         return Message(row["id"], row["sender_id"], row["receiver_id"],
-                       row["text"], row["timestamp"])
+                       row["text"], row["timestamp"], attachment)

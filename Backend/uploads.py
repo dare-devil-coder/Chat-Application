@@ -1,0 +1,60 @@
+"""File uploads: validation, saving and describing attachments."""
+import os
+import uuid
+
+from werkzeug.utils import secure_filename
+
+from exceptions import UnsupportedFileError, AttachmentNotFoundError
+
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
+MAX_UPLOAD_MB = 25
+
+# Only these extensions are accepted (so nobody can upload .html or .exe files)
+ALLOWED = {
+    "image": {"png", "jpg", "jpeg", "gif", "webp"},
+    "video": {"mp4", "webm", "mov"},
+    "file": {"pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "csv", "zip"},
+}
+
+
+def extension_of(filename):
+    return filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+
+
+def kind_of(filename):
+    ext = extension_of(filename)
+    for kind, extensions in ALLOWED.items():
+        if ext in extensions:
+            return kind
+    raise UnsupportedFileError(f"Files of type '.{ext}' are not allowed")
+
+
+def describe(stored_name):
+    """Build the attachment info from a stored file name.
+
+    The client only sends the stored name (file_id); everything else is
+    worked out here on the server, so a client cannot fake the details.
+    """
+    safe = os.path.basename(stored_name or "")
+    path = os.path.join(UPLOAD_DIR, safe)
+    if not safe or safe != stored_name or "_" not in safe or not os.path.isfile(path):
+        raise AttachmentNotFoundError("Attachment not found")
+    return {
+        "file_id": safe,
+        "url": f"/uploads/{safe}",
+        "name": safe.split("_", 1)[1],          # original name after the uuid prefix
+        "kind": kind_of(safe),
+        "size": os.path.getsize(path),
+    }
+
+
+def save_upload(file_storage):
+    original = file_storage.filename or ""
+    kind_of(original)                            # raises if the type is not allowed
+    ext = extension_of(original)
+    stem = secure_filename(original.rsplit(".", 1)[0]) or "file"
+    stored = f"{uuid.uuid4().hex}_{stem}.{ext}"
+
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    file_storage.save(os.path.join(UPLOAD_DIR, stored))
+    return describe(stored)

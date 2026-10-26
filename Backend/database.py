@@ -7,6 +7,13 @@ from exceptions import (UserAlreadyExistsError, UserNotFoundError,
 DB_PATH = "chat.db"
 db_lock = threading.Lock()   # only one thread writes at a time
 
+ATTACHMENT_COLUMNS = [
+    ("attachment_url", "TEXT"),
+    ("attachment_name", "TEXT"),
+    ("attachment_kind", "TEXT"),
+    ("attachment_size", "INTEGER"),
+]
+
 
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
@@ -36,6 +43,11 @@ def init_db():
                     FOREIGN KEY (receiver_id) REFERENCES users(id)
                 );
             """)
+            # Migration: add the attachment columns to an older messages table
+            existing = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
+            for column, column_type in ATTACHMENT_COLUMNS:
+                if column not in existing:
+                    conn.execute(f"ALTER TABLE messages ADD COLUMN {column} {column_type}")
             conn.commit()
         finally:
             conn.close()
@@ -66,18 +78,25 @@ def create_user(username, password_hash, role="user"):
             conn.close()
 
 
-def save_message(sender_id, receiver_id, text):
+def save_message(sender_id, receiver_id, text, attachment=None):
+    """Save a message. `attachment` is the dict returned by uploads.describe()."""
     text = (text or "").strip()
-    if not text:
+    if not text and not attachment:
         raise InvalidMessageError("Message cannot be empty")
     if get_user_by_id(sender_id) is None or get_user_by_id(receiver_id) is None:
         raise UserNotFoundError("Sender or receiver does not exist")
+    attachment = attachment or {}
     with db_lock:
         conn = get_connection()
         try:
             cur = conn.execute(
-                "INSERT INTO messages (sender_id, receiver_id, text) VALUES (?, ?, ?)",
-                (sender_id, receiver_id, text))
+                """INSERT INTO messages
+                   (sender_id, receiver_id, text,
+                    attachment_url, attachment_name, attachment_kind, attachment_size)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (sender_id, receiver_id, text,
+                 attachment.get("url"), attachment.get("name"),
+                 attachment.get("kind"), attachment.get("size")))
             conn.commit()
             msg_id = cur.lastrowid
         finally:
