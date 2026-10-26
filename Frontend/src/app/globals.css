@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --primary-bg: #F8FAFC;
+  --white: #FFFFFF;
+  --primary-text: #111827;
+  --secondary-text: #6B7280;
+  --muted-text: #9CA3AF;
+  --border: #E5E7EB;
+  --light-border: #F1F5F9;
+  --primary-blue: #2563EB;
+  --blue-hover: #1D4ED8;
+  --light-blue: #EFF6FF;
+  --online-green: #22C55E;
+  --offline-gray: #9CA3AF;
+  --incoming-message: #F1F5F9;
+  --outgoing-message: #2563EB;
+  --outgoing-text: #FFFFFF;
+  --selected-chat: #EFF6FF;
+  --search-background: #F8FAFC;
+  --chat-ai-accent: #4F46E5;
+  --chat-ai-light-background: #EEF2FF;
+  --chat-ai-border: #C7D2FE;
+}
+
+body {
+  background-color: var(--primary-bg);
+  color: var(--primary-text);
+  font-family: 'Inter', sans-serif;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Custom subtle scrollbar styling to stay clean and minimal */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #E5E7EB;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #9CA3AF;
+}
