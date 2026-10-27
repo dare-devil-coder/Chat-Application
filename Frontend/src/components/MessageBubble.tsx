@@ -22,6 +22,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
   const isOutgoing = message.isOutgoing;
   const attachment = message.attachment;
   const isMedia = attachment?.kind === 'image' || attachment?.kind === 'video';
+  const isAudio = attachment?.kind === 'audio';
 
   return (
     <div
@@ -31,7 +32,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
     >
       <div
         className={`max-w-[70%] px-[14px] py-[10px] rounded-[14px] text-[14px] leading-[1.5] break-words ${
-          isMedia ? 'w-[320px]' : ''
+          isMedia ? 'w-[320px]' : isAudio ? 'w-[300px]' : ''
         } ${
           isOutgoing
             ? 'bg-[#2563EB] text-[#FFFFFF] animate-send'
@@ -55,6 +56,15 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
             controls
             preload="metadata"
             className="rounded-[10px] w-full max-h-[320px] bg-black"
+          />
+        )}
+
+        {attachment?.kind === 'audio' && (
+          <audio
+            src={attachment.url}
+            controls
+            preload="metadata"
+            className="w-full h-10"
           />
         )}
 

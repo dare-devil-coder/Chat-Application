@@ -6,21 +6,25 @@ import { Search } from 'lucide-react';
 interface SearchBarProps {
   value: string;
   onChange: (value: string) => void;
+  placeholder?: string;
 }
 
-// User discovery search bar placed directly below the sidebar header
-// Filters the user list in real-time with clean 10px rounded borders
-// and strict color tokens matching the specification.
-export const SearchBar: React.FC<SearchBarProps> = ({ value, onChange }) => {
+// Search input placed below the sidebar header.
+// Used both for filtering people and for searching messages.
+export const SearchBar: React.FC<SearchBarProps> = ({
+  value,
+  onChange,
+  placeholder = 'Search people...',
+}) => {
   return (
-    <div className="mx-4 mb-4 shrink-0">
+    <div className="mx-4 mb-3 shrink-0">
       <div className="h-[44px] bg-[#F8FAFC] border border-[#E5E7EB] rounded-[10px] px-3 flex items-center gap-2 focus-within:border-[#2563EB] transition-colors duration-120">
         <Search size={18} color="#6B7280" className="shrink-0" />
         <input
           type="text"
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          placeholder="Search people..."
+          placeholder={placeholder}
           className="w-full bg-transparent text-[14px] text-[#111827] placeholder-[#6B7280] outline-none font-normal"
         />
         {value && (

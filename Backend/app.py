@@ -90,6 +90,7 @@ def serve_upload(filename):
     as_attachment = request.args.get("download") == "1"
     return send_from_directory(uploads.UPLOAD_DIR, filename,
                                as_attachment=as_attachment,
+                               mimetype=uploads.mimetype_for(filename),
                                download_name=filename.split("_", 1)[-1])
 
 
@@ -183,6 +184,33 @@ def set_chat_timer(user_a, user_b):
     socketio.emit("timer changed", event, to=f"user-{user_a}")
     socketio.emit("timer changed", event, to=f"user-{user_b}")
     return jsonify(event)
+
+
+# ---------------- Search ----------------
+@app.route("/api/search", methods=["GET"])
+@log_time
+def search():
+    user_id = request.args.get("user_id", type=int)
+    query = (request.args.get("q") or "").strip()
+    other_id = request.args.get("with", type=int)          # optional: one chat only
+    kind = request.args.get("kind") or None                # optional: image / video / file / audio
+    limit = request.args.get("limit", default=50, type=int)
+
+    if user_id is None:
+        raise InvalidInputError("user_id is required")
+    if len(query) < 2:
+        raise InvalidInputError("Type at least 2 characters to search")
+    if kind not in (None, "image", "video", "file", "audio"):
+        raise InvalidInputError("Unknown file type filter")
+    limit = max(1, min(limit, 200))
+
+    results = []
+    for row in db.search_messages(user_id, query, other_id, kind, limit):
+        item = Message.from_row(row).to_dict()
+        item["other_id"] = row["receiver_id"] if row["sender_id"] == user_id else row["sender_id"]
+        results.append(item)
+    log_event(f"SEARCH user {user_id}: {len(results)} result(s)")   # the search text is not logged
+    return jsonify({"query": query, "count": len(results), "results": results})
 
 
 # ---------------- Socket.IO ----------------

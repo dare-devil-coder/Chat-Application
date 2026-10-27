@@ -15,11 +15,29 @@ ALLOWED = {
     "image": {"png", "jpg", "jpeg", "gif", "webp"},
     "video": {"mp4", "webm", "mov"},
     "file": {"pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "csv", "zip"},
+    # voice messages recorded in the browser (the browser names audio-only webm ".weba")
+    "audio": {"weba", "ogg", "oga", "mp3", "wav", "m4a", "aac"},
+}
+
+# Browsers need the right Content-Type to play audio, so it is set explicitly
+AUDIO_MIME = {
+    "weba": "audio/webm",
+    "ogg": "audio/ogg",
+    "oga": "audio/ogg",
+    "mp3": "audio/mpeg",
+    "wav": "audio/wav",
+    "m4a": "audio/mp4",
+    "aac": "audio/aac",
 }
 
 
 def extension_of(filename):
     return filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+
+
+def mimetype_for(filename):
+    """Content-Type for audio files, or None to let Flask work it out."""
+    return AUDIO_MIME.get(extension_of(filename))
 
 
 def kind_of(filename):

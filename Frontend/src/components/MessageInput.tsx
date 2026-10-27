@@ -1,13 +1,26 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Paperclip, X, FileText, Film, Clock } from 'lucide-react';
+import { Send, Paperclip, X, FileText, Film, Clock, Mic, Trash2 } from 'lucide-react';
 import { formatSize } from '../lib/formatSize';
 
 const MAX_MB = 25;
 const ACCEPT =
   'image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm,video/quicktime,' +
+  'audio/mpeg,audio/wav,audio/ogg,audio/mp4,.mp3,.wav,.ogg,.m4a,' +
   '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip';
+
+const MAX_VOICE_SECONDS = 300; // a voice message stops automatically after 5 minutes
+
+// Pick an audio format this browser can record (Chrome/Firefox: webm or ogg, Safari: mp4)
+const pickMimeType = () =>
+  ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'].find((t) =>
+    MediaRecorder.isTypeSupported(t)
+  ) ?? '';
+
+// File extension the server recognises as audio
+const extensionFor = (mime: string) =>
+  mime.includes('ogg') ? 'ogg' : mime.includes('mp4') ? 'm4a' : 'weba';
 
 interface MessageInputProps {
   onSendMessage: (text: string, file?: File) => void | Promise<void>;
@@ -34,6 +47,15 @@ export const MessageInput: React.FC<MessageInputProps> = ({
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // --- voice recording ---
+  const [recording, setRecording] = useState(false);
+  const [seconds, setSeconds] = useState(0);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const cancelledRef = useRef(false);
+  const timerRef = useRef<number | null>(null);
 
   // Make a small preview for images and clean it up afterwards
   useEffect(() => {
@@ -83,6 +105,75 @@ export const MessageInput: React.FC<MessageInputProps> = ({
     setText('');
     setFile(null);
   };
+
+  const startRecording = async () => {
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      alert('Voice recording is not supported in this browser');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      const mimeType = pickMimeType();
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      chunksRef.current = [];
+      cancelledRef.current = false;
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      recorder.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop()); // turn the microphone off
+        if (cancelledRef.current) return;
+        const type = (recorder.mimeType || mimeType || 'audio/webm').split(';')[0];
+        const blob = new Blob(chunksRef.current, { type });
+        if (blob.size === 0) return;
+        if (blob.size > MAX_MB * 1024 * 1024) {
+          alert(`Voice message is too large (maximum ${MAX_MB} MB)`);
+          return;
+        }
+        const voiceFile = new File([blob], `voice-message.${extensionFor(type)}`, { type });
+        onSendMessage('', voiceFile);
+      };
+
+      recorder.start();
+      recorderRef.current = recorder;
+      setSeconds(0);
+      setRecording(true);
+      timerRef.current = window.setInterval(() => setSeconds((s) => s + 1), 1000);
+    } catch {
+      alert('Microphone access was denied or is not available');
+    }
+  };
+
+  // send = true: stop and send the recording, send = false: throw it away
+  const finishRecording = (send: boolean) => {
+    cancelledRef.current = !send;
+    if (timerRef.current !== null) {
+      window.clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    const recorder = recorderRef.current;
+    if (recorder && recorder.state !== 'inactive') recorder.stop();
+    setRecording(false);
+  };
+
+  // Stop automatically after the maximum length
+  useEffect(() => {
+    if (recording && seconds >= MAX_VOICE_SECONDS) finishRecording(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seconds, recording]);
+
+  // Release the microphone if the component disappears while recording
+  useEffect(() => {
+    return () => {
+      cancelledRef.current = true;
+      if (timerRef.current !== null) window.clearInterval(timerRef.current);
+      const recorder = recorderRef.current;
+      if (recorder && recorder.state !== 'inactive') recorder.stop();
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -153,6 +244,34 @@ export const MessageInput: React.FC<MessageInputProps> = ({
         </div>
       )}
 
+      {recording ? (
+        /* Recording bar: replaces the text box while the microphone is on */
+        <div className="h-[76px] px-6 py-4 flex items-center gap-3">
+          <span className="w-3 h-3 rounded-full bg-[#DC2626] animate-pulse shrink-0" />
+          <span className="text-[14px] text-[#111827] tabular-nums">
+            {String(Math.floor(seconds / 60)).padStart(2, '0')}:{String(seconds % 60).padStart(2, '0')}
+          </span>
+          <span className="text-[13px] text-[#6B7280] flex-1">Recording voice message...</span>
+          <button
+            type="button"
+            onClick={() => finishRecording(false)}
+            title="Discard recording"
+            aria-label="Discard recording"
+            className="w-[44px] h-[44px] rounded-[10px] flex items-center justify-center hover:bg-[#F8FAFC] transition-colors duration-120"
+          >
+            <Trash2 size={20} color="#DC2626" />
+          </button>
+          <button
+            type="button"
+            onClick={() => finishRecording(true)}
+            title="Send voice message"
+            aria-label="Send voice message"
+            className="w-[44px] h-[44px] bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[10px] flex items-center justify-center transition-colors duration-120"
+          >
+            <Send size={18} color="#FFFFFF" />
+          </button>
+        </div>
+      ) : (
       <form
         onSubmit={handleSubmit}
         className="h-[76px] px-6 py-4 flex items-center gap-3"
@@ -193,6 +312,18 @@ export const MessageInput: React.FC<MessageInputProps> = ({
           </button>
         )}
 
+        {/* Record a voice message */}
+        <button
+          type="button"
+          onClick={startRecording}
+          disabled={disabled}
+          title="Record a voice message"
+          aria-label="Record a voice message"
+          className="w-[44px] h-[44px] rounded-[10px] flex items-center justify-center shrink-0 hover:bg-[#F8FAFC] disabled:opacity-50 transition-colors duration-120"
+        >
+          <Mic size={20} color="#6B7280" />
+        </button>
+
         <input
           type="text"
           value={text}
@@ -213,6 +344,7 @@ export const MessageInput: React.FC<MessageInputProps> = ({
           {isScheduling ? <Clock size={18} color="#FFFFFF" /> : <Send size={18} color="#FFFFFF" />}
         </button>
       </form>
+      )}
     </div>
   );
 };

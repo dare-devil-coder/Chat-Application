@@ -17,9 +17,15 @@ MESSAGE_EXTRA_COLUMNS = [
 ]
 
 
+def _casefold(value):
+    """SQL helper: lower-case that also works for non-English text."""
+    return value.casefold() if isinstance(value, str) else ""
+
+
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.create_function("casefold", 1, _casefold, deterministic=True)
     return conn
 
 
@@ -275,3 +281,36 @@ def delete_expired_messages(now_text):
             return rows
         finally:
             conn.close()
+
+
+# ================= Search =================
+def escape_like(text):
+    """Make % and _ in the user's text match literally inside a LIKE pattern."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def search_messages(user_id, query, other_id=None, kind=None, limit=50):
+    """Find messages (newest first) that the user sent or received.
+
+    Matches the message text and the attachment file name, ignoring case.
+    Optional filters: one chat partner (other_id) and one attachment kind.
+    """
+    pattern = f"%{escape_like(query.casefold())}%"
+    sql = r"""SELECT * FROM messages
+              WHERE (sender_id = ? OR receiver_id = ?)
+                AND (expires_at IS NULL OR expires_at > ?)
+                AND (casefold(text) LIKE ? ESCAPE '\'
+                     OR casefold(attachment_name) LIKE ? ESCAPE '\')"""
+    params = [user_id, user_id, utc_now_text(), pattern, pattern]
+
+    if other_id is not None:
+        sql += """ AND ((sender_id = ? AND receiver_id = ?)
+                     OR (sender_id = ? AND receiver_id = ?))"""
+        params += [user_id, other_id, other_id, user_id]
+    if kind:
+        sql += " AND attachment_kind = ?"
+        params.append(kind)
+
+    sql += " ORDER BY id DESC LIMIT ?"
+    params.append(limit)
+    return _read(sql, tuple(params))

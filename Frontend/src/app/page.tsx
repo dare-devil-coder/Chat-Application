@@ -11,6 +11,7 @@ import { EmptyState } from '../components/EmptyState';
 import { AuthScreen, AuthUser } from '../components/AuthScreen';
 import { ScheduledPanel, ScheduledItem } from '../components/ScheduledPanel';
 import { DisappearingBar } from '../components/DisappearingBar';
+import { SearchResult } from '../components/MessageSearchResults';
 
 const API_URL = 'http://localhost:5000';
 
@@ -24,7 +25,7 @@ interface ServerMessage {
   attachment?: {
     url: string; // relative, e.g. /uploads/abc_photo.png
     name: string;
-    kind: 'image' | 'video' | 'file';
+    kind: 'image' | 'video' | 'file' | 'audio';
     size: number;
   } | null;
 }
@@ -56,6 +57,7 @@ const previewOf = (m: ServerMessage): string => {
   if (m.text) return m.text;
   if (m.attachment?.kind === 'image') return 'Photo';
   if (m.attachment?.kind === 'video') return 'Video';
+  if (m.attachment?.kind === 'audio') return 'Voice message';
   if (m.attachment) return 'Document';
   return '';
 };
@@ -87,6 +89,8 @@ export default function ChatApp() {
   const [scheduled, setScheduled] = useState<ScheduledItem[]>([]);
   // Disappearing-messages timer (in seconds) per chat, keyed by the other person's id
   const [timers, setTimers] = useState<Record<string, number>>({});
+  // Message to scroll to and highlight after the user opens a search result
+  const [highlightId, setHighlightId] = useState<string | null>(null);
 
   const socketRef = useRef<Socket | null>(null);
   const selectedUserIdRef = useRef<string | null>(null);
@@ -224,6 +228,7 @@ export default function ChatApp() {
     setOnlineIds([]);
     setScheduled([]);
     setTimers({});
+    setHighlightId(null);
   };
 
   const handleSendMessage = async (text: string, file?: File) => {
@@ -374,6 +379,26 @@ export default function ChatApp() {
     }
   };
 
+  // Search all of my messages (and file names) on the server
+  const searchMessages = async (query: string, kind: string): Promise<SearchResult[]> => {
+    if (!currentUser) return [];
+    const params = new URLSearchParams({ user_id: String(currentUser.id), q: query });
+    if (kind) params.set('kind', kind);
+    const res = await fetch(`${API_URL}/api/search?${params.toString()}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Search failed');
+    return data.results as SearchResult[];
+  };
+
+  // Open the chat that contains a search result and highlight that message
+  const handleOpenSearchResult = (result: SearchResult) => {
+    const user = users.find((u) => u.id === String(result.other_id));
+    if (!user) return;
+    setHighlightId(`msg-${result.id}`);
+    handleSelectUser(user);
+    setTimeout(() => setHighlightId(null), 4000);
+  };
+
   const handleSelectUser = (user: User) => {
     setSelectedUserId(user.id);
     setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, hasUnread: false } : u)));
@@ -423,6 +448,8 @@ export default function ChatApp() {
         onSelectUser={handleSelectUser}
         currentUsername={currentUser.username}
         onLogout={handleLogout}
+        onSearchMessages={searchMessages}
+        onOpenSearchResult={handleOpenSearchResult}
         className={`${selectedUserId ? 'hidden md:flex' : 'flex'}`}
       />
 
@@ -440,7 +467,7 @@ export default function ChatApp() {
                 onChange={handleChangeTimer}
               />
             )}
-            <MessageList messages={currentMessages} />
+            <MessageList messages={currentMessages} highlightId={highlightId} />
             <ScheduledPanel items={scheduledForChat} onCancel={handleCancelScheduled} />
             <MessageInput
               onSendMessage={handleSendMessage}
