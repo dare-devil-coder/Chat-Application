@@ -1,3 +1,4 @@
+import os
 import threading
 
 from flask import Flask, request, jsonify, send_from_directory
@@ -9,9 +10,10 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import database as db
 import uploads
 from exceptions import (ChatError, InvalidInputError, InvalidCredentialsError,
-                        UserNotFoundError)
-from models import User, Message
-from utils import log_time, paginate, log_event
+                        UserNotFoundError, ScheduledNotFoundError)
+from models import User, Message, ScheduledMessage
+from scheduler import start_scheduler
+from utils import log_time, paginate, log_event, parse_future_utc
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = uploads.MAX_UPLOAD_MB * 1024 * 1024
@@ -126,6 +128,63 @@ def remove_message(message_id):
     return jsonify({"deleted": message_id})
 
 
+# ---------------- Scheduled messages ----------------
+@app.route("/api/scheduled", methods=["POST"])
+@log_time
+def schedule_message():
+    data = request.get_json(silent=True) or {}
+    send_at = parse_future_utc(data.get("send_at"))
+    row = db.create_scheduled(data.get("sender_id"), data.get("receiver_id"),
+                              data.get("text"), send_at)
+    item = ScheduledMessage.from_row(row)
+    log_event(f"SCHEDULE {item.sender_id} -> {item.receiver_id} at {item.send_at} UTC")
+    return jsonify(item.to_dict()), 201
+
+
+@app.route("/api/scheduled/<int:user_id>", methods=["GET"])
+def list_scheduled(user_id):
+    return jsonify([ScheduledMessage.from_row(r).to_dict()
+                    for r in db.list_pending_scheduled(user_id)])
+
+
+@app.route("/api/scheduled/<int:schedule_id>", methods=["DELETE"])
+def cancel_scheduled(schedule_id):
+    user_id = request.args.get("user_id", type=int)
+    if user_id is None or not db.cancel_scheduled(schedule_id, user_id):
+        raise ScheduledNotFoundError("Scheduled message not found or already sent")
+    log_event(f"SCHEDULE CANCELLED {schedule_id}")
+    return jsonify({"cancelled": schedule_id})
+
+
+# ---------------- Disappearing messages ----------------
+ALLOWED_TIMERS = {0, 60, 3600, 86400, 604800}    # off, 1 min, 1 hour, 24 hours, 7 days
+
+
+@app.route("/api/chats/<int:user_a>/<int:user_b>/timer", methods=["GET"])
+def get_chat_timer(user_a, user_b):
+    return jsonify({"seconds": db.get_disappear_seconds(user_a, user_b)})
+
+
+@app.route("/api/chats/<int:user_a>/<int:user_b>/timer", methods=["PUT"])
+def set_chat_timer(user_a, user_b):
+    data = request.get_json(silent=True) or {}
+    user_id = data.get("user_id")
+    seconds = data.get("seconds")
+    if user_id not in (user_a, user_b):
+        raise InvalidInputError("You are not part of this chat")
+    if not isinstance(seconds, int) or seconds not in ALLOWED_TIMERS:
+        raise InvalidInputError("Unsupported timer value")
+    if db.get_user_by_id(user_a) is None or db.get_user_by_id(user_b) is None:
+        raise UserNotFoundError("User does not exist")
+
+    db.set_disappear_seconds(user_a, user_b, seconds)
+    log_event(f"TIMER chat {user_a}-{user_b} set to {seconds}s by user {user_id}")
+    event = {"user_a": user_a, "user_b": user_b, "seconds": seconds}
+    socketio.emit("timer changed", event, to=f"user-{user_a}")
+    socketio.emit("timer changed", event, to=f"user-{user_b}")
+    return jsonify(event)
+
+
 # ---------------- Socket.IO ----------------
 @socketio.on("connect")
 def on_connect():
@@ -178,4 +237,9 @@ def on_disconnect():
 
 
 if __name__ == "__main__":
+    # With debug=True Flask starts the app twice (a watcher process and the real
+    # one). Start the background worker only in the real one, or every scheduled
+    # message would be handled by two workers.
+    if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        start_scheduler(socketio)
     socketio.run(app, port=5000, debug=True)

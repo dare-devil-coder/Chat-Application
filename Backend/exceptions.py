@@ -28,3 +28,7 @@ class UnsupportedFileError(ChatError):
 
 class AttachmentNotFoundError(ChatError):
     status_code = 404
+
+
+class ScheduledNotFoundError(ChatError):
+    status_code = 404

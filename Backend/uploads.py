@@ -5,6 +5,7 @@ import uuid
 from werkzeug.utils import secure_filename
 
 from exceptions import UnsupportedFileError, AttachmentNotFoundError
+from utils import log_event
 
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
 MAX_UPLOAD_MB = 25
@@ -58,3 +59,16 @@ def save_upload(file_storage):
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     file_storage.save(os.path.join(UPLOAD_DIR, stored))
     return describe(stored)
+
+
+def delete_file(url):
+    """Remove an uploaded file from disk (used when its message disappears)."""
+    safe = os.path.basename(url or "")
+    if not safe:
+        return
+    try:
+        os.remove(os.path.join(UPLOAD_DIR, safe))
+    except FileNotFoundError:
+        pass                                   # already gone
+    except OSError as err:
+        log_event(f"Could not delete {safe}: {err}")

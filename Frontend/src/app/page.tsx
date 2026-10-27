@@ -9,6 +9,8 @@ import { MessageList } from '../components/MessageList';
 import { MessageInput } from '../components/MessageInput';
 import { EmptyState } from '../components/EmptyState';
 import { AuthScreen, AuthUser } from '../components/AuthScreen';
+import { ScheduledPanel, ScheduledItem } from '../components/ScheduledPanel';
+import { DisappearingBar } from '../components/DisappearingBar';
 
 const API_URL = 'http://localhost:5000';
 
@@ -18,6 +20,7 @@ interface ServerMessage {
   receiver_id: number;
   text: string;
   timestamp: string;
+  expires_at?: string | null; // UTC; set when the chat has a disappearing timer
   attachment?: {
     url: string; // relative, e.g. /uploads/abc_photo.png
     name: string;
@@ -42,6 +45,7 @@ const toMessage = (m: ServerMessage, myId: number): Message => ({
   text: m.text,
   timestamp: formatTime(m.timestamp),
   isOutgoing: m.sender_id === myId,
+  expiresAt: m.expires_at ?? undefined,
   attachment: m.attachment
     ? { ...m.attachment, url: `${API_URL}${m.attachment.url}` }
     : undefined,
@@ -80,6 +84,9 @@ export default function ChatApp() {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [onlineIds, setOnlineIds] = useState<number[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [scheduled, setScheduled] = useState<ScheduledItem[]>([]);
+  // Disappearing-messages timer (in seconds) per chat, keyed by the other person's id
+  const [timers, setTimers] = useState<Record<string, number>>({});
 
   const socketRef = useRef<Socket | null>(null);
   const selectedUserIdRef = useRef<string | null>(null);
@@ -91,6 +98,8 @@ export default function ChatApp() {
   );
   const selectedUser = usersWithPresence.find((u) => u.id === selectedUserId) || null;
   const currentMessages = selectedUserId ? conversations[selectedUserId] || [] : [];
+  // Pending scheduled messages for the chat that is open
+  const scheduledForChat = scheduled.filter((s) => String(s.receiver_id) === selectedUserId);
 
   // 1) Restore login for this browser tab (sessionStorage is per-tab,
   //    so two tabs can be logged in as two different users)
@@ -124,6 +133,15 @@ export default function ChatApp() {
         setUsers([AI_USER, ...others]);
       })
       .catch((err) => console.error('Could not load users', err));
+  }, [currentUser]);
+
+  // 2b) Load my pending scheduled messages
+  useEffect(() => {
+    if (!currentUser) return;
+    fetch(`${API_URL}/api/scheduled/${currentUser.id}`)
+      .then((r) => r.json())
+      .then((list: ScheduledItem[]) => setScheduled(list))
+      .catch((err) => console.error('Could not load scheduled messages', err));
   }, [currentUser]);
 
   // 3) Socket connection: join my private room, receive private messages
@@ -163,6 +181,29 @@ export default function ChatApp() {
 
     socket.on('presence', (p: { online: number[] }) => setOnlineIds(p.online));
 
+    // Messages whose disappearing timer ran out are removed from every open screen
+    socket.on('messages expired', (e: { ids: number[] }) => {
+      const gone = new Set(e.ids.map((id) => `msg-${id}`));
+      setConversations((prev) => {
+        const next: Record<string, Message[]> = {};
+        for (const [chatId, list] of Object.entries(prev)) {
+          next[chatId] = list.filter((m) => !gone.has(m.id));
+        }
+        return next;
+      });
+    });
+
+    // Either person changed the timer of a chat
+    socket.on('timer changed', (e: { user_a: number; user_b: number; seconds: number }) => {
+      const otherId = String(e.user_a === currentUser.id ? e.user_b : e.user_a);
+      setTimers((prev) => ({ ...prev, [otherId]: e.seconds }));
+    });
+
+    // The server tells me when one of my scheduled messages has been sent
+    socket.on('scheduled sent', (e: { id: number }) =>
+      setScheduled((prev) => prev.filter((s) => s.id !== e.id))
+    );
+
     return () => {
       socket.disconnect();
       socketRef.current = null;
@@ -181,6 +222,8 @@ export default function ChatApp() {
     setConversations(aiOnlyConversations());
     setSelectedUserId(null);
     setOnlineIds([]);
+    setScheduled([]);
+    setTimers({});
   };
 
   const handleSendMessage = async (text: string, file?: File) => {
@@ -267,11 +310,81 @@ export default function ChatApp() {
     }, 500);
   };
 
+  const handleScheduleMessage = async (text: string, sendAtIso: string) => {
+    if (!selectedUserId || !currentUser) return;
+    if (selectedUser?.isAI) {
+      alert('Messages to Chat AI cannot be scheduled');
+      return;
+    }
+    try {
+      const res = await fetch(`${API_URL}/api/scheduled`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sender_id: currentUser.id,
+          receiver_id: Number(selectedUserId),
+          text,
+          send_at: sendAtIso,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not schedule the message');
+      setScheduled((prev) =>
+        [...prev, data as ScheduledItem].sort((a, b) => a.send_at.localeCompare(b.send_at))
+      );
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not schedule the message');
+    }
+  };
+
+  const handleCancelScheduled = async (id: number) => {
+    if (!currentUser) return;
+    try {
+      const res = await fetch(`${API_URL}/api/scheduled/${id}?user_id=${currentUser.id}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Could not cancel');
+      }
+      setScheduled((prev) => prev.filter((s) => s.id !== id));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not cancel');
+    }
+  };
+
+  const handleChangeTimer = async (seconds: number) => {
+    if (!selectedUserId || !currentUser) return;
+    try {
+      const res = await fetch(
+        `${API_URL}/api/chats/${currentUser.id}/${selectedUserId}/timer`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: currentUser.id, seconds }),
+        }
+      );
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Could not change the timer');
+      }
+      // No local update needed: the server sends a 'timer changed' event to both people
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not change the timer');
+    }
+  };
+
   const handleSelectUser = (user: User) => {
     setSelectedUserId(user.id);
     setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, hasUnread: false } : u)));
 
     if (user.isAI || !currentUser) return;
+
+    // Load this chat's disappearing-messages setting
+    fetch(`${API_URL}/api/chats/${currentUser.id}/${user.id}/timer`)
+      .then((r) => r.json())
+      .then((d: { seconds: number }) => setTimers((prev) => ({ ...prev, [user.id]: d.seconds })))
+      .catch((err) => console.error('Could not load timer', err));
 
     // Load saved history for this conversation from the database
     fetch(`${API_URL}/api/messages/${currentUser.id}/${user.id}?size=1000`)
@@ -321,8 +434,19 @@ export default function ChatApp() {
         {selectedUser ? (
           <>
             <ChatHeader user={selectedUser} onBack={() => setSelectedUserId(null)} />
+            {!selectedUser.isAI && (
+              <DisappearingBar
+                seconds={timers[selectedUser.id] ?? 0}
+                onChange={handleChangeTimer}
+              />
+            )}
             <MessageList messages={currentMessages} />
-            <MessageInput onSendMessage={handleSendMessage} disabled={uploading} />
+            <ScheduledPanel items={scheduledForChat} onCancel={handleCancelScheduled} />
+            <MessageInput
+              onSendMessage={handleSendMessage}
+              onScheduleMessage={handleScheduleMessage}
+              disabled={uploading}
+            />
           </>
         ) : (
           <EmptyState />

@@ -1,13 +1,20 @@
 'use client';
 
 import React from 'react';
-import { Check, FileText } from 'lucide-react';
+import { Check, FileText, Timer } from 'lucide-react';
 import { Message } from '../data/mockData';
 import { formatSize } from '../lib/formatSize';
 
 interface MessageBubbleProps {
   message: Message;
 }
+
+// Server times are UTC; show them in the viewer's local time
+const formatExpiry = (ts: string) =>
+  new Date(ts.replace(' ', 'T') + 'Z').toLocaleString([], {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
 
 // Single message bubble. Shows the attachment (photo, video or document card)
 // above the text/caption when the message has one.
@@ -85,6 +92,15 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
         <span className="text-[11px] text-[#9CA3AF] select-none font-normal">
           {message.timestamp}
         </span>
+        {message.expiresAt && (
+          <span
+            className="flex items-center text-[#9CA3AF]"
+            title={`Disappears ${formatExpiry(message.expiresAt)}`}
+            aria-label="Disappearing message"
+          >
+            <Timer size={11} />
+          </span>
+        )}
         {isOutgoing && (
           <span
             className="flex items-center text-[#9CA3AF]"

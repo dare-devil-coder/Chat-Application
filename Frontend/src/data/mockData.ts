@@ -17,6 +17,7 @@ export interface Message {
   isOutgoing: boolean;
   status?: 'sent' | 'delivered' | 'read';
   attachment?: Attachment;
+  expiresAt?: string;
 } 
 
 export interface User {
