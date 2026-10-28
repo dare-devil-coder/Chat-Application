@@ -12,6 +12,7 @@ import { AuthScreen, AuthUser } from '../components/AuthScreen';
 import { ScheduledPanel, ScheduledItem } from '../components/ScheduledPanel';
 import { DisappearingBar } from '../components/DisappearingBar';
 import { SearchResult } from '../components/MessageSearchResults';
+import { AutoReplyModal } from '../components/AutoReplyModal';
 
 const API_URL = 'http://localhost:5000';
 
@@ -22,6 +23,7 @@ interface ServerMessage {
   text: string;
   timestamp: string;
   expires_at?: string | null; // UTC; set when the chat has a disappearing timer
+  is_auto?: boolean; // true for automatic replies
   attachment?: {
     url: string; // relative, e.g. /uploads/abc_photo.png
     name: string;
@@ -47,6 +49,7 @@ const toMessage = (m: ServerMessage, myId: number): Message => ({
   timestamp: formatTime(m.timestamp),
   isOutgoing: m.sender_id === myId,
   expiresAt: m.expires_at ?? undefined,
+  isAuto: m.is_auto ?? false,
   attachment: m.attachment
     ? { ...m.attachment, url: `${API_URL}${m.attachment.url}` }
     : undefined,
@@ -91,6 +94,7 @@ export default function ChatApp() {
   const [timers, setTimers] = useState<Record<string, number>>({});
   // Message to scroll to and highlight after the user opens a search result
   const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [showAutoReply, setShowAutoReply] = useState(false);
 
   const socketRef = useRef<Socket | null>(null);
   const selectedUserIdRef = useRef<string | null>(null);
@@ -229,6 +233,7 @@ export default function ChatApp() {
     setScheduled([]);
     setTimers({});
     setHighlightId(null);
+    setShowAutoReply(false);
   };
 
   const handleSendMessage = async (text: string, file?: File) => {
@@ -448,6 +453,7 @@ export default function ChatApp() {
         onSelectUser={handleSelectUser}
         currentUsername={currentUser.username}
         onLogout={handleLogout}
+        onOpenAutoReply={() => setShowAutoReply(true)}
         onSearchMessages={searchMessages}
         onOpenSearchResult={handleOpenSearchResult}
         className={`${selectedUserId ? 'hidden md:flex' : 'flex'}`}
@@ -479,6 +485,14 @@ export default function ChatApp() {
           <EmptyState />
         )}
       </section>
+
+      {showAutoReply && (
+        <AutoReplyModal
+          apiUrl={API_URL}
+          userId={currentUser.id}
+          onClose={() => setShowAutoReply(false)}
+        />
+      )}
     </main>
   );
 }

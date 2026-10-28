@@ -39,6 +39,10 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
             : 'bg-[#F1F5F9] text-[#111827] animate-receive'
         }`}
       >
+        {message.isAuto && (
+          <span className="block text-[11px] font-medium opacity-70 mb-1">Auto-reply</span>
+        )}
+
         {attachment?.kind === 'image' && (
           <a href={attachment.url} target="_blank" rel="noreferrer" title="Open full size">
             {/* eslint-disable-next-line @next/next/no-img-element */}

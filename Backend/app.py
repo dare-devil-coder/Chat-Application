@@ -9,9 +9,11 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 import database as db
 import uploads
+from auto_reply import maybe_reply
 from exceptions import (ChatError, InvalidInputError, InvalidCredentialsError,
-                        UserNotFoundError, ScheduledNotFoundError)
-from models import User, Message, ScheduledMessage
+                        UserNotFoundError, ScheduledNotFoundError,
+                        RuleNotFoundError)
+from models import User, Message, ScheduledMessage, AutoReplyRule
 from scheduler import start_scheduler
 from utils import log_time, paginate, log_event, parse_future_utc
 
@@ -213,6 +215,40 @@ def search():
     return jsonify({"query": query, "count": len(results), "results": results})
 
 
+# ---------------- Auto-reply rules ----------------
+@app.route("/api/autoreply/<int:user_id>", methods=["GET"])
+def list_auto_replies(user_id):
+    return jsonify([AutoReplyRule.from_row(r).to_dict() for r in db.list_rules(user_id)])
+
+
+@app.route("/api/autoreply", methods=["POST"])
+def add_auto_reply():
+    data = request.get_json(silent=True) or {}
+    row = db.create_rule(data.get("user_id"), data.get("keyword"), data.get("reply"))
+    rule = AutoReplyRule.from_row(row)
+    log_event(f"AUTO-REPLY RULE {rule.id} created by user {rule.user_id}")
+    return jsonify(rule.to_dict()), 201
+
+
+@app.route("/api/autoreply/<int:rule_id>", methods=["PATCH"])
+def toggle_auto_reply(rule_id):
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data.get("enabled"), bool):
+        raise InvalidInputError("'enabled' must be true or false")
+    if not db.set_rule_enabled(rule_id, data.get("user_id"), data["enabled"]):
+        raise RuleNotFoundError("Rule not found")
+    return jsonify(AutoReplyRule.from_row(db.get_rule(rule_id)).to_dict())
+
+
+@app.route("/api/autoreply/<int:rule_id>", methods=["DELETE"])
+def remove_auto_reply(rule_id):
+    user_id = request.args.get("user_id", type=int)
+    if user_id is None or not db.delete_rule(rule_id, user_id):
+        raise RuleNotFoundError("Rule not found")
+    log_event(f"AUTO-REPLY RULE {rule_id} deleted")
+    return jsonify({"deleted": rule_id})
+
+
 # ---------------- Socket.IO ----------------
 @socketio.on("connect")
 def on_connect():
@@ -248,6 +284,7 @@ def on_private_message(data):
               f"({len(payload['text'])} chars{extra})")
     emit("private message", payload, to=f"user-{payload['receiver_id']}")
     emit("private message", payload, to=f"user-{payload['sender_id']}")
+    maybe_reply(socketio, row)          # keyword auto-reply of the receiver (if any)
 
 
 @socketio.on("disconnect")

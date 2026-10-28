@@ -35,7 +35,8 @@ class AdminUser(User):
 
 
 class Message:
-    def __init__(self, id, sender_id, receiver_id, text, timestamp, attachment=None, expires_at=None):
+    def __init__(self, id, sender_id, receiver_id, text, timestamp, attachment=None,
+                 expires_at=None, is_auto=False):
         self.id = id
         self.sender_id = sender_id
         self.receiver_id = receiver_id
@@ -43,6 +44,7 @@ class Message:
         self.timestamp = timestamp
         self.attachment = attachment      # None, or {url, name, kind, size}
         self.expires_at = expires_at      # None, or UTC 'YYYY-MM-DD HH:MM:SS'
+        self.is_auto = is_auto            # True for automatic replies
 
     def to_dict(self):
         return {
@@ -53,6 +55,7 @@ class Message:
             "timestamp": self.timestamp,
             "attachment": self.attachment,
             "expires_at": self.expires_at,
+            "is_auto": self.is_auto,
         }
 
     def __str__(self):
@@ -70,7 +73,8 @@ class Message:
                 "size": row["attachment_size"],
             }
         return Message(row["id"], row["sender_id"], row["receiver_id"],
-                       row["text"], row["timestamp"], attachment, row["expires_at"])
+                       row["text"], row["timestamp"], attachment, row["expires_at"],
+                       bool(row["is_auto"]))
 
 
 class ScheduledMessage:
@@ -99,3 +103,36 @@ class ScheduledMessage:
     def from_row(row):
         return ScheduledMessage(row["id"], row["sender_id"], row["receiver_id"],
                                 row["text"], row["send_at"], row["status"])
+
+
+class AutoReplyRule:
+    """One rule: when a message contains `keyword`, answer with `reply_text`."""
+
+    def __init__(self, id, user_id, keyword, reply_text, enabled):
+        self.id = id
+        self.user_id = user_id
+        self.keyword = keyword
+        self.reply_text = reply_text
+        self.enabled = enabled
+
+    def matches(self, text):
+        """Case-insensitive 'contains' check that also works for non-English text."""
+        return self.enabled and self.keyword.casefold() in (text or "").casefold()
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "keyword": self.keyword,
+            "reply": self.reply_text,
+            "enabled": self.enabled,
+        }
+
+    def __str__(self):
+        state = "on" if self.enabled else "off"
+        return f"[{state}] '{self.keyword}' -> '{self.reply_text}'"
+
+    @staticmethod
+    def from_row(row):
+        return AutoReplyRule(row["id"], row["user_id"], row["keyword"],
+                             row["reply_text"], bool(row["enabled"]))

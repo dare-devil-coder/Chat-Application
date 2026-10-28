@@ -13,6 +13,7 @@ interface ChatSidebarProps {
   onSelectUser: (user: User) => void;
   currentUsername: string;
   onLogout: () => void;
+  onOpenAutoReply: () => void;
   onSearchMessages: (query: string, kind: string) => Promise<SearchResult[]>;
   onOpenSearchResult: (result: SearchResult) => void;
   className?: string;
@@ -35,6 +36,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
   onSelectUser,
   currentUsername,
   onLogout,
+  onOpenAutoReply,
   onSearchMessages,
   onOpenSearchResult,
   className = '',
@@ -92,7 +94,11 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
     <aside
       className={`h-screen w-full md:w-[300px] lg:w-[320px] bg-[#FFFFFF] border-r border-[#E5E7EB] flex flex-col shrink-0 ${className}`}
     >
-      <SidebarHeader username={currentUsername} onLogout={onLogout} />
+      <SidebarHeader
+        username={currentUsername}
+        onLogout={onLogout}
+        onOpenAutoReply={onOpenAutoReply}
+      />
 
       {/* Switch: search people or search messages */}
       <div className="mx-4 mb-3 mt-3 flex gap-1 bg-[#F1F5F9] p-1 rounded-[10px] shrink-0">

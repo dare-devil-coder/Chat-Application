@@ -14,6 +14,7 @@ MESSAGE_EXTRA_COLUMNS = [
     ("attachment_kind", "TEXT"),
     ("attachment_size", "INTEGER"),
     ("expires_at", "TEXT"),            # disappearing messages
+    ("is_auto", "INTEGER NOT NULL DEFAULT 0"),   # automatic replies
 ]
 
 
@@ -55,6 +56,15 @@ def init_db():
                     user_high INTEGER NOT NULL,
                     disappear_seconds INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (user_low, user_high)
+                );
+                CREATE TABLE IF NOT EXISTS auto_reply_rules (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    keyword TEXT NOT NULL,
+                    reply_text TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
                 );
                 CREATE TABLE IF NOT EXISTS scheduled_messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -103,7 +113,7 @@ def create_user(username, password_hash, role="user"):
             conn.close()
 
 
-def save_message(sender_id, receiver_id, text, attachment=None):
+def save_message(sender_id, receiver_id, text, attachment=None, is_auto=False):
     """Save a message. `attachment` is the dict returned by uploads.describe()."""
     text = (text or "").strip()
     if not text and not attachment:
@@ -121,11 +131,12 @@ def save_message(sender_id, receiver_id, text, attachment=None):
                 """INSERT INTO messages
                    (sender_id, receiver_id, text,
                     attachment_url, attachment_name, attachment_kind, attachment_size,
-                    expires_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    expires_at, is_auto)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (sender_id, receiver_id, text,
                  attachment.get("url"), attachment.get("name"),
-                 attachment.get("kind"), attachment.get("size"), expires_at))
+                 attachment.get("kind"), attachment.get("size"), expires_at,
+                 1 if is_auto else 0))
             conn.commit()
             msg_id = cur.lastrowid
         finally:
@@ -314,3 +325,74 @@ def search_messages(user_id, query, other_id=None, kind=None, limit=50):
     sql += " ORDER BY id DESC LIMIT ?"
     params.append(limit)
     return _read(sql, tuple(params))
+
+
+# ================= Auto-reply rules =================
+MAX_RULES_PER_USER = 20
+
+
+def create_rule(user_id, keyword, reply_text):
+    keyword = (keyword or "").strip()
+    reply_text = (reply_text or "").strip()
+    if not keyword or not reply_text:
+        raise InvalidMessageError("Keyword and reply cannot be empty")
+    if len(keyword) > 50 or len(reply_text) > 500:
+        raise InvalidMessageError("Keyword is limited to 50 characters and the reply to 500")
+    if get_user_by_id(user_id) is None:
+        raise UserNotFoundError("User does not exist")
+    if len(list_rules(user_id)) >= MAX_RULES_PER_USER:
+        raise InvalidMessageError(f"You can have at most {MAX_RULES_PER_USER} rules")
+    with db_lock:
+        conn = get_connection()
+        try:
+            cur = conn.execute(
+                "INSERT INTO auto_reply_rules (user_id, keyword, reply_text) VALUES (?, ?, ?)",
+                (user_id, keyword, reply_text))
+            conn.commit()
+            rule_id = cur.lastrowid
+        finally:
+            conn.close()
+    return _read("SELECT * FROM auto_reply_rules WHERE id = ?", (rule_id,), one=True)
+
+
+def list_rules(user_id):
+    return _read("SELECT * FROM auto_reply_rules WHERE user_id = ? ORDER BY id", (user_id,))
+
+
+def set_rule_enabled(rule_id, user_id, enabled):
+    with db_lock:
+        conn = get_connection()
+        try:
+            cur = conn.execute(
+                "UPDATE auto_reply_rules SET enabled = ? WHERE id = ? AND user_id = ?",
+                (1 if enabled else 0, rule_id, user_id))
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+
+
+def delete_rule(rule_id, user_id):
+    with db_lock:
+        conn = get_connection()
+        try:
+            cur = conn.execute("DELETE FROM auto_reply_rules WHERE id = ? AND user_id = ?",
+                               (rule_id, user_id))
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+
+
+def get_rule(rule_id):
+    return _read("SELECT * FROM auto_reply_rules WHERE id = ?", (rule_id,), one=True)
+
+
+def recent_auto_reply_exists(owner_id, other_id, seconds):
+    """Did `owner_id` already auto-reply to `other_id` within the last `seconds`?"""
+    row = _read(
+        """SELECT 1 FROM messages
+           WHERE sender_id = ? AND receiver_id = ? AND is_auto = 1 AND timestamp > ?
+           LIMIT 1""",
+        (owner_id, other_id, utc_now_text(-seconds)), one=True)
+    return row is not None

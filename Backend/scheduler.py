@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 import database as db
 import uploads
+from auto_reply import maybe_reply
 from exceptions import ChatError
 from models import Message
 from utils import log_event, utc_now_text
@@ -34,6 +35,7 @@ def deliver_due_messages(socketio):
         socketio.emit("private message", payload, to=sender_room)
         socketio.emit("scheduled sent", {"id": item["id"]}, to=sender_room)
         log_event(f"SCHEDULED SENT {item['id']}: {item['sender_id']} -> {item['receiver_id']}")
+        maybe_reply(socketio, row)
 
 
 def purge_expired_messages(socketio):

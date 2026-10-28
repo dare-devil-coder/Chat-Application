@@ -32,3 +32,7 @@ class AttachmentNotFoundError(ChatError):
 
 class ScheduledNotFoundError(ChatError):
     status_code = 404
+
+
+class RuleNotFoundError(ChatError):
+    status_code = 404

@@ -5,7 +5,7 @@
 export interface Attachment {
   url: string;
   name: string;
-  kind: 'image' | 'video' | 'file';
+  kind: 'image' | 'video' | 'file' | 'audio';
   size: number;
 }
 
@@ -18,6 +18,7 @@ export interface Message {
   status?: 'sent' | 'delivered' | 'read';
   attachment?: Attachment;
   expiresAt?: string;
+  isAuto?: boolean;
 } 
 
 export interface User {
