@@ -1,11 +1,32 @@
+# Dependencies and build output
 node_modules/
-.env
 .next/
 dist/
 build/
-venv/
+
+# Python
 __pycache__/
-chat.db
-chat.log
-uploads/
-server.log
+*.py[cod]
+*$py.class
+venv/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local configuration
+.env
+.env.*
+!.env.example
+
+# Runtime data
+*.log
+Backend/chat.db
+Backend/chat.db-*
+Backend/uploads/
+Backend/large_tmp/
+Backend/large_files/
+
+# OS files
+.DS_Store
+Thumbs.db
