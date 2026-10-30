@@ -1,13 +1,17 @@
+import html
 import os
 import threading
 
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_socketio import SocketIO, emit, join_room
 from flask_cors import CORS
 from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.security import generate_password_hash, check_password_hash
 
 import database as db
+import ai_service
+import commands
+import large_files
 import uploads
 from auto_reply import maybe_reply
 from exceptions import (ChatError, InvalidInputError, InvalidCredentialsError,
@@ -23,6 +27,15 @@ CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 db.init_db()
+
+def resolve_attachment(data):
+    """Attachment info for a new message, worked out on the server (never trusted from the browser)."""
+    if data.get("file_id"):
+        return uploads.describe(data["file_id"])
+    if data.get("share_token"):
+        return large_files.describe_shared(data["share_token"], data.get("sender_id"))
+    return None
+
 
 # ---- who is online (dict + set) ----
 online_users = {}            # user_id -> set of socket ids (one user can have many tabs)
@@ -99,8 +112,7 @@ def serve_upload(filename):
 @app.route("/api/messages", methods=["POST"])
 def create_message():
     data = request.get_json(silent=True) or {}
-    file_id = data.get("file_id")
-    attachment = uploads.describe(file_id) if file_id else None
+    attachment = resolve_attachment(data)
     row = db.save_message(data.get("sender_id"), data.get("receiver_id"),
                           data.get("text"), attachment)
     return jsonify(Message.from_row(row).to_dict()), 201
@@ -195,14 +207,14 @@ def search():
     user_id = request.args.get("user_id", type=int)
     query = (request.args.get("q") or "").strip()
     other_id = request.args.get("with", type=int)          # optional: one chat only
-    kind = request.args.get("kind") or None                # optional: image / video / file / audio
+    kind = request.args.get("kind") or None                # optional: image / video / file / audio / shared
     limit = request.args.get("limit", default=50, type=int)
 
     if user_id is None:
         raise InvalidInputError("user_id is required")
     if len(query) < 2:
         raise InvalidInputError("Type at least 2 characters to search")
-    if kind not in (None, "image", "video", "file", "audio"):
+    if kind not in (None, "image", "video", "file", "audio", "shared"):
         raise InvalidInputError("Unknown file type filter")
     limit = max(1, min(limit, 200))
 
@@ -249,6 +261,78 @@ def remove_auto_reply(rule_id):
     return jsonify({"deleted": rule_id})
 
 
+# ---------------- Large files (chunked upload + expiring links) ----------------
+@app.route("/api/large/start", methods=["POST"])
+@log_time
+def large_start():
+    data = request.get_json(silent=True) or {}
+    info = large_files.start_upload(data.get("user_id"), data.get("filename"),
+                                    data.get("size"), data.get("expires_in"))
+    return jsonify(info), 201
+
+
+@app.route("/api/large/<upload_id>/chunk/<int:index>", methods=["PUT"])
+def large_chunk(upload_id, index):
+    user_id = request.args.get("user_id", type=int)
+    large_files.save_chunk(upload_id, user_id, index, request.get_data())
+    return jsonify({"index": index})
+
+
+@app.route("/api/large/<upload_id>/status", methods=["GET"])
+def large_status(upload_id):
+    user_id = request.args.get("user_id", type=int)
+    return jsonify(large_files.received_chunks(upload_id, user_id))
+
+
+@app.route("/api/large/<upload_id>/complete", methods=["POST"])
+@log_time
+def large_complete(upload_id):
+    data = request.get_json(silent=True) or {}
+    return jsonify(large_files.finish_upload(upload_id, data.get("user_id"))), 201
+
+
+@app.route("/f/<token>", methods=["GET"])
+def download_shared(token):
+    """Public download link. Always sent as a download, never shown inside a page."""
+    try:
+        row, path = large_files.get_for_download(token)
+    except ChatError as err:
+        page = ("<!doctype html><meta charset='utf-8'><title>Download</title>"
+                "<body style='font-family:sans-serif;text-align:center;margin-top:20vh'>"
+                f"<h2>{html.escape(str(err))}</h2></body>")
+        return page, err.status_code
+    range_header = request.headers.get("Range")
+    if not range_header or range_header.startswith("bytes=0-"):   # count a download once
+        db.count_download(token)
+        log_event(f"DOWNLOAD link {token[:6]}...")
+    return send_file(path, as_attachment=True, download_name=row["original_name"],
+                     mimetype="application/octet-stream")
+
+
+# ---------------- AI: slash commands and Chat AI ----------------
+@app.route("/api/commands", methods=["GET"])
+def list_commands():
+    return jsonify([c.info() for c in commands.COMMANDS.values()])
+
+
+@app.route("/api/commands", methods=["POST"])
+@log_time
+def run_command():
+    data = request.get_json(silent=True) or {}
+    partner_id = data.get("partner_id")
+    if partner_id is not None and not isinstance(partner_id, int):
+        raise InvalidInputError("partner_id must be a number")
+    return jsonify(commands.execute(data.get("input"), data.get("user_id"), partner_id))
+
+
+@app.route("/api/ai/chat", methods=["POST"])
+@log_time
+def ai_chat():
+    data = request.get_json(silent=True) or {}
+    reply = ai_service.chat_reply(data.get("user_id"), data.get("messages"))
+    return jsonify({"reply": reply})
+
+
 # ---------------- Socket.IO ----------------
 @socketio.on("connect")
 def on_connect():
@@ -270,8 +354,7 @@ def on_join(data):
 @socketio.on("private message")
 def on_private_message(data):
     try:
-        file_id = data.get("file_id")
-        attachment = uploads.describe(file_id) if file_id else None
+        attachment = resolve_attachment(data)
         row = db.save_message(data.get("sender_id"), data.get("receiver_id"),
                               data.get("text"), attachment)
     except ChatError as err:

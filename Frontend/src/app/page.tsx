@@ -13,6 +13,10 @@ import { ScheduledPanel, ScheduledItem } from '../components/ScheduledPanel';
 import { DisappearingBar } from '../components/DisappearingBar';
 import { SearchResult } from '../components/MessageSearchResults';
 import { AutoReplyModal } from '../components/AutoReplyModal';
+import { needsLink, DEFAULT_EXPIRY } from '../lib/files';
+import { uploadLarge } from '../lib/largeUpload';
+import { CommandResultCard } from '../components/CommandResultCard';
+import { CommandInfo, CommandResult } from '../lib/commands';
 
 const API_URL = 'http://localhost:5000';
 
@@ -27,8 +31,9 @@ interface ServerMessage {
   attachment?: {
     url: string; // relative, e.g. /uploads/abc_photo.png
     name: string;
-    kind: 'image' | 'video' | 'file' | 'audio';
+    kind: 'image' | 'video' | 'file' | 'audio' | 'shared';
     size: number;
+    expires_at?: string | null; // only for shared download links
   } | null;
 }
 
@@ -89,12 +94,18 @@ export default function ChatApp() {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [onlineIds, setOnlineIds] = useState<number[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null); // large uploads
   const [scheduled, setScheduled] = useState<ScheduledItem[]>([]);
   // Disappearing-messages timer (in seconds) per chat, keyed by the other person's id
   const [timers, setTimers] = useState<Record<string, number>>({});
   // Message to scroll to and highlight after the user opens a search result
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [showAutoReply, setShowAutoReply] = useState(false);
+  // Slash commands (/improve, /summarize, /reply ...)
+  const [commands, setCommands] = useState<CommandInfo[]>([]);
+  const [commandResult, setCommandResult] = useState<CommandResult | null>(null);
+  const [commandLoading, setCommandLoading] = useState(false);
+  const [prefill, setPrefill] = useState<{ text: string; nonce: number } | null>(null);
 
   const socketRef = useRef<Socket | null>(null);
   const selectedUserIdRef = useRef<string | null>(null);
@@ -150,6 +161,15 @@ export default function ChatApp() {
       .then((r) => r.json())
       .then((list: ScheduledItem[]) => setScheduled(list))
       .catch((err) => console.error('Could not load scheduled messages', err));
+  }, [currentUser]);
+
+  // 2c) Load the list of slash commands from the server
+  useEffect(() => {
+    if (!currentUser) return;
+    fetch(`${API_URL}/api/commands`)
+      .then((r) => r.json())
+      .then((list: CommandInfo[]) => setCommands(list))
+      .catch((err) => console.error('Could not load commands', err));
   }, [currentUser]);
 
   // 3) Socket connection: join my private room, receive private messages
@@ -234,24 +254,40 @@ export default function ChatApp() {
     setTimers({});
     setHighlightId(null);
     setShowAutoReply(false);
+    setCommands([]);
+    setCommandResult(null);
+    setPrefill(null);
   };
 
-  const handleSendMessage = async (text: string, file?: File) => {
+  const handleSendMessage = async (text: string, file?: File, expiresIn?: number) => {
     if (!selectedUserId || !currentUser) return;
 
     // Real users: upload the file first (if any), then send over the socket.
     // The server saves the message and echoes it back to both people.
     if (!selectedUser?.isAI) {
       let fileId: string | undefined;
+      let shareToken: string | undefined;
       if (file) {
         setUploading(true);
         try {
-          fileId = await uploadFile(file);
+          if (needsLink(file)) {
+            // Big (or unusual) files are uploaded in chunks and sent as a download link
+            shareToken = await uploadLarge(
+              API_URL,
+              file,
+              currentUser.id,
+              expiresIn ?? DEFAULT_EXPIRY,
+              setUploadProgress
+            );
+          } else {
+            fileId = await uploadFile(file);
+          }
         } catch (err) {
           alert(err instanceof Error ? err.message : 'Upload failed');
           return;
         } finally {
           setUploading(false);
+          setUploadProgress(null);
         }
       }
       socketRef.current?.emit('private message', {
@@ -259,6 +295,7 @@ export default function ChatApp() {
         receiver_id: Number(selectedUserId),
         text,
         file_id: fileId,
+        share_token: shareToken,
       });
       return;
     }
@@ -295,29 +332,81 @@ export default function ChatApp() {
       )
     );
 
-    setTimeout(() => {
-      const aiReply: Message = {
-        id: `ai-msg-${Date.now()}`,
-        senderId: 'chat-ai',
-        text: `Here is a clear explanation regarding "${text}": in computer systems, clean modular components help you scale quickly and avoid coupling errors.`,
-        timestamp: new Date().toLocaleTimeString([], {
-          hour: 'numeric',
-          minute: '2-digit',
+    // Ask the server's AI. A "Thinking..." message is shown first and replaced by the answer.
+    const chatId = selectedUserId;
+    const placeholderId = `ai-msg-${Date.now()}`;
+    const history = [...(conversations[chatId] || []), newMessage].slice(-10).map((m) => ({
+      role: m.isOutgoing ? 'user' : 'assistant',
+      content: m.text,
+    }));
+
+    setConversations((prev) => ({
+      ...prev,
+      [chatId]: [
+        ...(prev[chatId] || []),
+        {
+          id: placeholderId,
+          senderId: 'chat-ai',
+          text: 'Thinking...',
+          timestamp: timeString,
+          isOutgoing: false,
+        },
+      ],
+    }));
+
+    let answer: string;
+    try {
+      const res = await fetch(`${API_URL}/api/ai/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: currentUser.id, messages: history }),
+      });
+      const data = await res.json();
+      answer = res.ok ? data.reply : `Sorry, I could not answer: ${data.error || 'unknown error'}`;
+    } catch {
+      answer = 'Sorry, I could not reach the server.';
+    }
+
+    setConversations((prev) => ({
+      ...prev,
+      [chatId]: (prev[chatId] || []).map((m) =>
+        m.id === placeholderId ? { ...m, text: answer } : m
+      ),
+    }));
+    setUsers((prev) =>
+      prev.map((u) => (u.id === chatId ? { ...u, lastMessage: answer, time: timeString } : u))
+    );
+  };
+
+  // Run a slash command typed in the message box; the answer is private to me
+  const handleRunCommand = async (input: string) => {
+    if (!currentUser) return;
+    setCommandLoading(true);
+    setCommandResult(null);
+    try {
+      const res = await fetch(`${API_URL}/api/commands`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: currentUser.id,
+          partner_id: selectedUser && !selectedUser.isAI ? Number(selectedUser.id) : null,
+          input,
         }),
-        isOutgoing: false,
-      };
-      setConversations((prev) => ({
-        ...prev,
-        [selectedUserId]: [...(prev[selectedUserId] || []), aiReply],
-      }));
-      setUsers((prev) =>
-        prev.map((u) =>
-          u.id === selectedUserId
-            ? { ...u, lastMessage: aiReply.text, time: aiReply.timestamp }
-            : u
-        )
-      );
-    }, 500);
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'The command failed');
+      setCommandResult(data as CommandResult);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'The command failed');
+    } finally {
+      setCommandLoading(false);
+    }
+  };
+
+  // "Use this text" / a suggested reply goes into the message box
+  const handleUseText = (text: string) => {
+    setPrefill({ text, nonce: Date.now() });
+    setCommandResult(null);
   };
 
   const handleScheduleMessage = async (text: string, sendAtIso: string) => {
@@ -406,6 +495,7 @@ export default function ChatApp() {
 
   const handleSelectUser = (user: User) => {
     setSelectedUserId(user.id);
+    setCommandResult(null);
     setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, hasUnread: false } : u)));
 
     if (user.isAI || !currentUser) return;
@@ -474,10 +564,20 @@ export default function ChatApp() {
               />
             )}
             <MessageList messages={currentMessages} highlightId={highlightId} />
+            <CommandResultCard
+              result={commandResult}
+              loading={commandLoading}
+              onUse={handleUseText}
+              onClose={() => setCommandResult(null)}
+            />
             <ScheduledPanel items={scheduledForChat} onCancel={handleCancelScheduled} />
             <MessageInput
               onSendMessage={handleSendMessage}
               onScheduleMessage={handleScheduleMessage}
+              uploadProgress={uploadProgress}
+              commands={commands}
+              onRunCommand={handleRunCommand}
+              prefill={prefill}
               disabled={uploading}
             />
           </>

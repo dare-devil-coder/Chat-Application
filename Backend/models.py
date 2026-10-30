@@ -71,6 +71,7 @@ class Message:
                 "name": row["attachment_name"],
                 "kind": row["attachment_kind"],
                 "size": row["attachment_size"],
+                "expires_at": row["attachment_expires"],     # only set for shared links
             }
         return Message(row["id"], row["sender_id"], row["receiver_id"],
                        row["text"], row["timestamp"], attachment, row["expires_at"],

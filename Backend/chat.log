@@ -158,3 +158,87 @@
 2026-10-28 15:05:48 | LOGIN alice
 2026-10-28 15:05:48 | ONLINE user 1
 2026-10-28 15:11:14 | TIMER chat 1-2 set to 0s by user 1
+2026-10-28 16:42:32 | ONLINE user 2
+2026-10-28 16:42:34 | ONLINE user 1
+2026-10-29 12:59:41 | LOGIN alice
+2026-10-29 12:59:41 | ONLINE user 1
+2026-10-29 12:59:49 | LOGIN bob
+2026-10-29 12:59:49 | ONLINE user 2
+2026-10-29 13:00:37 | LARGE upload started: user 1, 189012889 bytes, 37 chunk(s)
+2026-10-29 13:00:42 | LARGE file shared: user 1, 189012889 bytes, link btlLTN...
+2026-10-29 13:00:42 | MESSAGE 1 -> 2 (0 chars + shared)
+2026-10-29 13:00:47 | DOWNLOAD link btlLTN...
+2026-10-29 13:01:01 | DOWNLOAD link btlLTN...
+2026-10-29 13:15:07 | ONLINE user 1
+2026-10-29 13:15:07 | ONLINE user 2
+2026-10-29 13:15:20 | ONLINE user 2
+2026-10-29 13:15:20 | ONLINE user 1
+2026-10-29 13:15:32 | ONLINE user 1
+2026-10-29 13:15:32 | ONLINE user 2
+2026-10-29 13:15:39 | ONLINE user 2
+2026-10-29 13:15:39 | ONLINE user 1
+2026-10-29 13:15:47 | ONLINE user 1
+2026-10-29 13:15:47 | ONLINE user 2
+2026-10-29 13:15:56 | ONLINE user 1
+2026-10-29 13:15:56 | ONLINE user 2
+2026-10-29 13:16:00 | ONLINE user 1
+2026-10-29 13:16:00 | ONLINE user 2
+2026-10-29 13:16:30 | OFFLINE user 1
+2026-10-29 13:16:30 | OFFLINE user 2
+2026-10-29 13:16:30 | ONLINE user 1
+2026-10-29 13:16:30 | ONLINE user 2
+2026-10-29 13:24:07 | OFFLINE user 1
+2026-10-29 13:24:09 | ONLINE user 1
+2026-10-29 13:24:09 | OFFLINE user 2
+2026-10-29 13:24:10 | ONLINE user 2
+2026-10-29 13:24:18 | MESSAGE 1 -> 2 (3 chars)
+2026-10-29 13:24:33 | ERROR InvalidInputError: Type the message you want to improve
+2026-10-29 13:24:53 | AI provider: mock (offline-demo)
+2026-10-29 13:24:53 | AI improve by user 1 (mock)
+2026-10-29 13:25:18 | AI improve by user 1 (mock)
+2026-10-29 13:25:37 | AI chat by user 1 (mock)
+2026-10-29 13:25:52 | AI chat by user 1 (mock)
+2026-10-29 13:27:11 | OFFLINE user 1
+2026-10-29 13:27:12 | OFFLINE user 2
+2026-10-29 13:58:17 | LOGIN alice
+2026-10-29 13:58:18 | ONLINE user 1
+2026-10-29 13:58:22 | AI provider: groq (llama-3.3-70b-versatile)
+2026-10-29 13:58:23 | ERROR AIUnavailableError: The AI service returned an error (404)
+2026-10-29 13:58:27 | ERROR AIUnavailableError: The AI service returned an error (404)
+2026-10-29 14:00:37 | ONLINE user 1
+2026-10-29 14:00:41 | OFFLINE user 1
+2026-10-29 14:00:42 | ONLINE user 1
+2026-10-29 14:00:45 | AI provider: groq (llama-3.3-70b-versatile)
+2026-10-29 14:00:46 | ERROR AIUnavailableError: The AI service returned an error (404) Details: The model `llama-3.3-70b-versatile` does not exist or you do not have access to it.
+2026-10-29 14:01:37 | LARGE cleanup: 1 expired file(s), 0 abandoned upload(s)
+2026-10-29 14:04:15 | OFFLINE user 1
+2026-10-29 14:04:15 | ONLINE user 1
+2026-10-29 14:04:19 | ERROR AIUnavailableError: The AI service returned an error (404) Details: The model `llama-3.3-70b-versatile` does not exist or you do not have access to it.
+2026-10-29 14:04:39 | OFFLINE user 1
+2026-10-29 14:04:40 | ONLINE user 1
+2026-10-29 14:04:45 | ERROR AIUnavailableError: The AI service returned an error (404) Details: The model `llama-3.3-70b-versatile` does not exist or you do not have access to it.
+2026-10-29 14:05:05 | ONLINE user 1
+2026-10-29 14:05:22 | OFFLINE user 1
+2026-10-29 14:05:23 | ONLINE user 1
+2026-10-29 14:05:26 | AI provider: groq (openai/gpt-oss-20b)
+2026-10-29 14:05:29 | AI chat by user 1 (groq)
+2026-10-29 14:05:46 | LOGIN bob
+2026-10-29 14:05:47 | ONLINE user 2
+2026-10-29 14:05:58 | MESSAGE 2 -> 1 (3 chars)
+2026-10-29 14:06:03 | ERROR InvalidInputError: Type the message you want to improve
+2026-10-29 14:06:23 | AI improve by user 2 (groq)
+2026-10-29 14:06:33 | MESSAGE 2 -> 1 (36 chars)
+2026-10-29 14:06:44 | AI summarize by user 2 (groq)
+2026-10-29 14:07:29 | MESSAGE 1 -> 2 (35 chars)
+2026-10-29 14:07:34 | AI reply by user 2 (groq)
+2026-10-29 14:07:44 | MESSAGE 2 -> 1 (11 chars)
+2026-10-29 14:27:18 | OFFLINE user 2
+2026-10-29 14:27:18 | OFFLINE user 1
+2026-10-29 14:35:47 | ONLINE user 2
+2026-10-29 14:35:47 | ONLINE user 1
+2026-10-29 15:31:00 | OFFLINE user 1
+2026-10-29 15:31:00 | OFFLINE user 2
+2026-10-29 15:39:43 | ONLINE user 1
+2026-10-29 15:39:48 | ONLINE user 2
+2026-10-29 15:41:02 | OFFLINE user 2
+2026-10-29 15:41:02 | OFFLINE user 1

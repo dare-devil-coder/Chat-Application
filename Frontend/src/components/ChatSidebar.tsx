@@ -25,6 +25,7 @@ const KIND_FILTERS = [
   { label: 'Videos', value: 'video' },
   { label: 'Documents', value: 'file' },
   { label: 'Voice', value: 'audio' },
+  { label: 'Large files', value: 'shared' },
 ];
 
 // Complete sidebar column: header, a switch between "People" and "Messages"

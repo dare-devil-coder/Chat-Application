@@ -15,6 +15,7 @@ MESSAGE_EXTRA_COLUMNS = [
     ("attachment_size", "INTEGER"),
     ("expires_at", "TEXT"),            # disappearing messages
     ("is_auto", "INTEGER NOT NULL DEFAULT 0"),   # automatic replies
+    ("attachment_expires", "TEXT"),    # expiry of a shared large-file link
 ]
 
 
@@ -56,6 +57,27 @@ def init_db():
                     user_high INTEGER NOT NULL,
                     disappear_seconds INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (user_low, user_high)
+                );
+                CREATE TABLE IF NOT EXISTS large_uploads (
+                    id TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    filename TEXT NOT NULL,
+                    size INTEGER NOT NULL,
+                    chunk_size INTEGER NOT NULL,
+                    total_chunks INTEGER NOT NULL,
+                    expires_in INTEGER NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'uploading',
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS shared_files (
+                    token TEXT PRIMARY KEY,
+                    owner_id INTEGER NOT NULL,
+                    original_name TEXT NOT NULL,
+                    size INTEGER NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TEXT NOT NULL,
+                    download_count INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS auto_reply_rules (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -131,12 +153,12 @@ def save_message(sender_id, receiver_id, text, attachment=None, is_auto=False):
                 """INSERT INTO messages
                    (sender_id, receiver_id, text,
                     attachment_url, attachment_name, attachment_kind, attachment_size,
-                    expires_at, is_auto)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    expires_at, is_auto, attachment_expires)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (sender_id, receiver_id, text,
                  attachment.get("url"), attachment.get("name"),
                  attachment.get("kind"), attachment.get("size"), expires_at,
-                 1 if is_auto else 0))
+                 1 if is_auto else 0, attachment.get("expires_at")))
             conn.commit()
             msg_id = cur.lastrowid
         finally:
@@ -396,3 +418,103 @@ def recent_auto_reply_exists(owner_id, other_id, seconds):
            LIMIT 1""",
         (owner_id, other_id, utc_now_text(-seconds)), one=True)
     return row is not None
+
+
+# ================= Large files: chunked uploads and shared links =================
+def create_large_upload(upload_id, user_id, filename, size, chunk_size, total_chunks, expires_in):
+    with db_lock:
+        conn = get_connection()
+        try:
+            conn.execute(
+                """INSERT INTO large_uploads
+                   (id, user_id, filename, size, chunk_size, total_chunks, expires_in)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (upload_id, user_id, filename, size, chunk_size, total_chunks, expires_in))
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def get_large_upload(upload_id):
+    return _read("SELECT * FROM large_uploads WHERE id = ?", (upload_id,), one=True)
+
+
+def count_active_uploads(user_id):
+    row = _read("SELECT COUNT(*) AS n FROM large_uploads WHERE user_id = ? AND status != 'done'",
+                (user_id,), one=True)
+    return row["n"]
+
+
+def change_large_upload_status(upload_id, old_status, new_status):
+    """Atomically move an upload from old_status to new_status; False if it was not in old_status."""
+    with db_lock:
+        conn = get_connection()
+        try:
+            cur = conn.execute("UPDATE large_uploads SET status = ? WHERE id = ? AND status = ?",
+                               (new_status, upload_id, old_status))
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+
+
+def delete_large_upload(upload_id):
+    with db_lock:
+        conn = get_connection()
+        try:
+            conn.execute("DELETE FROM large_uploads WHERE id = ?", (upload_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def stale_large_uploads(created_before):
+    return _read("SELECT * FROM large_uploads WHERE created_at < ?", (created_before,))
+
+
+def create_shared_file(token, owner_id, original_name, size, sha256, expires_at):
+    with db_lock:
+        conn = get_connection()
+        try:
+            conn.execute(
+                """INSERT INTO shared_files (token, owner_id, original_name, size, sha256, expires_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (token, owner_id, original_name, size, sha256, expires_at))
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def get_shared_file(token):
+    return _read("SELECT * FROM shared_files WHERE token = ?", (token,), one=True)
+
+
+def count_download(token):
+    with db_lock:
+        conn = get_connection()
+        try:
+            conn.execute("UPDATE shared_files SET download_count = download_count + 1 WHERE token = ?",
+                         (token,))
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def active_shared_bytes(user_id, now_text):
+    row = _read("SELECT COALESCE(SUM(size), 0) AS total FROM shared_files "
+                "WHERE owner_id = ? AND expires_at > ?", (user_id, now_text), one=True)
+    return row["total"]
+
+
+def expired_shared_files(now_text):
+    return _read("SELECT * FROM shared_files WHERE expires_at <= ?", (now_text,))
+
+
+def delete_shared_file(token):
+    with db_lock:
+        conn = get_connection()
+        try:
+            conn.execute("DELETE FROM shared_files WHERE token = ?", (token,))
+            conn.commit()
+        finally:
+            conn.close()

@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { FileText, Image as ImageIcon, Film, Mic } from 'lucide-react';
+import { FileText, Image as ImageIcon, Film, Mic, Download } from 'lucide-react';
 
 export interface SearchResult {
   id: number;
@@ -13,8 +13,9 @@ export interface SearchResult {
   attachment?: {
     url: string;
     name: string;
-    kind: 'image' | 'video' | 'file' | 'audio';
+    kind: 'image' | 'video' | 'file' | 'audio' | 'shared';
     size: number;
+    expires_at?: string | null;
   } | null;
 }
 
@@ -118,7 +119,9 @@ export const MessageSearchResults: React.FC<MessageSearchResultsProps> = ({
               ? Film
               : r.attachment?.kind === 'audio'
                 ? Mic
-                : FileText;
+                : r.attachment?.kind === 'shared'
+                  ? Download
+                  : FileText;
         return (
           <button
             key={r.id}

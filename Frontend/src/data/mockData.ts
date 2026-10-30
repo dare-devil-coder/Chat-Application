@@ -2,12 +2,13 @@
 // Defines user profiles and chat message structures so that UI components
 // can render realistic conversation threads without needing a live backend database.
 
-export interface Attachment {
-  url: string;
-  name: string;
-  kind: 'image' | 'video' | 'file' | 'audio';
-  size: number;
-}
+  export interface Attachment {
+    url: string;
+    name: string;
+    kind: 'image' | 'video' | 'file' | 'audio' | 'shared';
+    size: number;
+    expires_at?: string | null;
+  }
 
 export interface Message {
   id: string;

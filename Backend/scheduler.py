@@ -5,7 +5,10 @@ due, saves them as normal messages and pushes them to both users over Socket.IO.
 """
 from datetime import datetime, timezone
 
+import time
+
 import database as db
+import large_files
 import uploads
 from auto_reply import maybe_reply
 from exceptions import ChatError
@@ -57,11 +60,23 @@ def purge_expired_messages(socketio):
     log_event(f"EXPIRED {len(expired)} message(s) deleted")
 
 
+_last_large_cleanup = 0.0
+
+
+def purge_large_files(socketio):
+    """Delete expired shared files and abandoned uploads (checked once a minute)."""
+    global _last_large_cleanup
+    if time.monotonic() - _last_large_cleanup < 60:
+        return
+    _last_large_cleanup = time.monotonic()
+    large_files.purge()
+
+
 def scheduler_loop(socketio):
     while True:
         # Every task is wrapped separately: the worker must never die,
         # and one failing task must not stop the others.
-        for task in (deliver_due_messages, purge_expired_messages):
+        for task in (deliver_due_messages, purge_expired_messages, purge_large_files):
             try:
                 task(socketio)
             except Exception as err:

@@ -36,3 +36,23 @@ class ScheduledNotFoundError(ChatError):
 
 class RuleNotFoundError(ChatError):
     status_code = 404
+
+
+class FileTooLargeError(ChatError):
+    status_code = 413
+
+
+class LinkExpiredError(ChatError):
+    status_code = 410
+
+
+class UploadNotFoundError(ChatError):
+    status_code = 404
+
+
+class AIUnavailableError(ChatError):
+    status_code = 503
+
+
+class RateLimitError(ChatError):
+    status_code = 429

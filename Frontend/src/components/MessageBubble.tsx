@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Check, FileText, Timer } from 'lucide-react';
+import { Check, FileText, Timer, Download } from 'lucide-react';
 import { Message } from '../data/mockData';
 import { formatSize } from '../lib/formatSize';
 
@@ -23,6 +23,12 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
   const attachment = message.attachment;
   const isMedia = attachment?.kind === 'image' || attachment?.kind === 'video';
   const isAudio = attachment?.kind === 'audio';
+  // Large files are shared as links that stop working after some time
+  const linkExpires =
+    attachment?.kind === 'shared' && attachment.expires_at
+      ? new Date(attachment.expires_at.replace(' ', 'T') + 'Z')
+      : null;
+  const linkExpired = linkExpires !== null && linkExpires.getTime() <= Date.now();
 
   return (
     <div
@@ -70,6 +76,31 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
             preload="metadata"
             className="w-full h-10"
           />
+        )}
+
+        {attachment?.kind === 'shared' && (
+          <a
+            href={linkExpired ? undefined : attachment.url}
+            target="_blank"
+            rel="noreferrer"
+            title={linkExpired ? 'This link has expired' : 'Download'}
+            className={`flex items-center gap-3 rounded-[10px] px-3 py-2 min-w-[240px] ${
+              isOutgoing ? 'bg-white/15' : 'bg-white'
+            } ${linkExpired ? 'opacity-60' : ''}`}
+          >
+            <Download size={22} color={isOutgoing ? '#FFFFFF' : '#2563EB'} />
+            <span className="min-w-0">
+              <span className="block text-[13px] font-medium truncate">{attachment.name}</span>
+              <span className={`block text-[12px] ${isOutgoing ? 'text-white/80' : 'text-[#6B7280]'}`}>
+                {formatSize(attachment.size)} ·{' '}
+                {linkExpired
+                  ? 'Link expired'
+                  : linkExpires
+                    ? `Link expires ${linkExpires.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`
+                    : 'Download link'}
+              </span>
+            </span>
+          </a>
         )}
 
         {attachment?.kind === 'file' && (

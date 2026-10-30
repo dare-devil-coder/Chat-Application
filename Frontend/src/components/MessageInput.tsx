@@ -3,12 +3,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Paperclip, X, FileText, Film, Clock, Mic, Trash2 } from 'lucide-react';
 import { formatSize } from '../lib/formatSize';
+import { MAX_LARGE_MB, EXPIRY_OPTIONS, DEFAULT_EXPIRY, needsLink } from '../lib/files';
+import { CommandInfo } from '../lib/commands';
 
-const MAX_MB = 25;
-const ACCEPT =
-  'image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm,video/quicktime,' +
-  'audio/mpeg,audio/wav,audio/ogg,audio/mp4,.mp3,.wav,.ogg,.m4a,' +
-  '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip';
+const MAX_MB = 25; // limit for a voice message (it is sent as a normal attachment)
 
 const MAX_VOICE_SECONDS = 300; // a voice message stops automatically after 5 minutes
 
@@ -23,7 +21,11 @@ const extensionFor = (mime: string) =>
   mime.includes('ogg') ? 'ogg' : mime.includes('mp4') ? 'm4a' : 'weba';
 
 interface MessageInputProps {
-  onSendMessage: (text: string, file?: File) => void | Promise<void>;
+  onSendMessage: (text: string, file?: File, expiresIn?: number) => void | Promise<void>;
+  uploadProgress?: number | null; // 0-100 while a large file is being uploaded
+  commands?: CommandInfo[]; // slash commands offered by the server
+  onRunCommand?: (input: string) => void | Promise<void>;
+  prefill?: { text: string; nonce: number } | null; // puts text into the box (from a command result)
   onScheduleMessage?: (text: string, sendAtIso: string) => void | Promise<void>;
   disabled?: boolean;
 }
@@ -39,14 +41,34 @@ const toLocalInputValue = (d: Date) => {
 export const MessageInput: React.FC<MessageInputProps> = ({
   onSendMessage,
   onScheduleMessage,
+  uploadProgress = null,
+  commands = [],
+  onRunCommand,
+  prefill = null,
   disabled = false,
 }) => {
   const [text, setText] = useState('');
   const [showSchedule, setShowSchedule] = useState(false);
   const [scheduleAt, setScheduleAt] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [expiresIn, setExpiresIn] = useState(DEFAULT_EXPIRY); // lifetime of a download link
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textInputRef = useRef<HTMLInputElement>(null);
+
+  // A command result can fill the message box ("Use this text", a suggested reply)
+  useEffect(() => {
+    if (prefill) {
+      setText(prefill.text);
+      textInputRef.current?.focus();
+    }
+  }, [prefill]);
+
+  // While the text is only "/something", list the commands that match it
+  const typingCommand = text.startsWith('/') && !text.includes(' ');
+  const commandMatches = typingCommand
+    ? commands.filter((c) => c.name.startsWith(text.slice(1).toLowerCase()))
+    : [];
 
   // --- voice recording ---
   const [recording, setRecording] = useState(false);
@@ -71,8 +93,8 @@ export const MessageInput: React.FC<MessageInputProps> = ({
     const picked = e.target.files?.[0];
     e.target.value = ''; // allows choosing the same file again later
     if (!picked) return;
-    if (picked.size > MAX_MB * 1024 * 1024) {
-      alert(`File is too large (maximum ${MAX_MB} MB)`);
+    if (picked.size > MAX_LARGE_MB * 1024 * 1024) {
+      alert(`File is too large (maximum ${MAX_LARGE_MB} MB)`);
       return;
     }
     setFile(picked);
@@ -82,6 +104,15 @@ export const MessageInput: React.FC<MessageInputProps> = ({
     e.preventDefault();
     const trimmed = text.trim();
     if ((!trimmed && !file) || disabled) return;
+
+    // "/improve hello" runs a command instead of sending a message
+    // (a text that starts with "/" but is not a known command is sent normally)
+    const commandName = trimmed.startsWith('/') ? trimmed.slice(1).split(/\s+/)[0].toLowerCase() : '';
+    if (!file && onRunCommand && commandName && commands.some((c) => c.name === commandName)) {
+      onRunCommand(trimmed);
+      setText('');
+      return;
+    }
 
     // Scheduled send: needs text, a time in the future, and no file (text only for now)
     if (showSchedule && scheduleAt && onScheduleMessage) {
@@ -101,7 +132,7 @@ export const MessageInput: React.FC<MessageInputProps> = ({
       return;
     }
 
-    onSendMessage(trimmed, file ?? undefined);
+    onSendMessage(trimmed, file ?? undefined, file && needsLink(file) ? expiresIn : undefined);
     setText('');
     setFile(null);
   };
@@ -187,6 +218,19 @@ export const MessageInput: React.FC<MessageInputProps> = ({
 
   return (
     <div className="bg-[#FFFFFF] border-t border-[#E5E7EB] shrink-0">
+      {/* Progress of a large upload */}
+      {uploadProgress !== null && (
+        <div className="px-6 pt-3">
+          <p className="text-[12px] text-[#6B7280] mb-1">Uploading... {uploadProgress}%</p>
+          <div className="h-1.5 rounded-full bg-[#F1F5F9] overflow-hidden">
+            <div
+              className="h-full bg-[#2563EB] transition-all duration-200"
+              style={{ width: `${uploadProgress}%` }}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Preview of the file that is about to be sent */}
       {file && (
         <div className="px-6 pt-3 flex items-center gap-3">
@@ -202,8 +246,27 @@ export const MessageInput: React.FC<MessageInputProps> = ({
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-[13px] text-[#111827] truncate">{file.name}</p>
-            <p className="text-[12px] text-[#6B7280]">{formatSize(file.size)}</p>
+            <p className="text-[12px] text-[#6B7280]">
+              {formatSize(file.size)}
+              {needsLink(file) && ' · will be sent as a download link'}
+            </p>
           </div>
+          {needsLink(file) && (
+            <label className="flex items-center gap-2 text-[12px] text-[#6B7280] shrink-0">
+              Link valid for
+              <select
+                value={expiresIn}
+                onChange={(e) => setExpiresIn(Number(e.target.value))}
+                className="h-8 bg-[#F8FAFC] border border-[#E5E7EB] rounded-[10px] px-2 text-[12px] text-[#111827] outline-none focus:border-[#2563EB]"
+              >
+                {EXPIRY_OPTIONS.map((o) => (
+                  <option key={o.seconds} value={o.seconds}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <button
             type="button"
             onClick={() => setFile(null)}
@@ -214,6 +277,27 @@ export const MessageInput: React.FC<MessageInputProps> = ({
             <X size={16} color="#6B7280" />
           </button>
         </div>
+      )}
+
+      {/* Command suggestions while typing "/" */}
+      {commandMatches.length > 0 && (
+        <ul className="px-6 pt-3 space-y-1">
+          {commandMatches.map((c) => (
+            <li key={c.name}>
+              <button
+                type="button"
+                onClick={() => {
+                  setText(`/${c.name} `);
+                  textInputRef.current?.focus();
+                }}
+                className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-[#F8FAFC] flex items-baseline gap-3"
+              >
+                <span className="text-[13px] font-medium text-[#2563EB]">/{c.name}</span>
+                <span className="text-[12px] text-[#6B7280] truncate">{c.description}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
 
       {/* Pick when the message should be sent */}
@@ -279,7 +363,6 @@ export const MessageInput: React.FC<MessageInputProps> = ({
         <input
           ref={fileInputRef}
           type="file"
-          accept={ACCEPT}
           onChange={handleFileChange}
           className="hidden"
         />
@@ -325,6 +408,7 @@ export const MessageInput: React.FC<MessageInputProps> = ({
         </button>
 
         <input
+          ref={textInputRef}
           type="text"
           value={text}
           onChange={(e) => setText(e.target.value)}
