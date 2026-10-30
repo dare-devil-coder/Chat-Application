@@ -1,0 +1,8 @@
+# Python 3.10 or newer is required.
+# Install with:  pip install -r requirements.txt
+Flask>=3.0
+Flask-Cors>=4.0
+Flask-SocketIO>=5.3
+python-socketio[client]>=5.10   # also installs websocket-client (used by desktop_client.py)
+requests>=2.31                   # AI service calls and the desktop client
+simple-websocket>=1.0            # faster WebSocket connections for Socket.IO
